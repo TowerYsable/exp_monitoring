@@ -222,6 +222,9 @@ def main():
         print("Input traffic file with load:{load:.2f}, cdf:{cdf}, n_host:{n_host} already exists".format(
             load=hostload, cdf=cdf, n_host=n_host))
     else:  # make the input traffic file
+        traffic_cdf = os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt" 
+        if not os.path.exists(traffic_cdf):
+            flow = args.cdf
         print("Generate a input traffic file...")
         print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
             cdf=os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt",
@@ -347,7 +350,9 @@ def main():
 
     # queue monitoring
     qlen_mon_start = flowgen_start_time
-    qlen_mon_end = flowgen_stop_time
+    # qlen_mon_end = flowgen_stop_time
+    qlen_mon_end = 5000000000
+
 
     if (cc_mode == 1):  # DCQCN
         ai = 10 * bw / 25

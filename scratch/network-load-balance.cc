@@ -86,7 +86,7 @@ uint32_t packet_payload_size = 1000, l2_chunk_size = 0, l2_ack_interval = 0;
 double pause_time = 5;  // PFC pause, microseconds
 double flowgen_start_time = 2.0, flowgen_stop_time = 2.5, simulator_extra_time = 0.1;
 // queue length monitoring time is not used in this simulator
-uint32_t qlen_dump_interval = 100000000, qlen_mon_interval = 1000;  // ns
+uint32_t qlen_dump_interval = 100000, qlen_mon_interval = 100;  // ns
 uint64_t qlen_mon_start;               // ns
 uint64_t qlen_mon_end;                 // ns
 uint32_t switch_mon_interval = 10000;  // ns
@@ -928,7 +928,7 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 flowgen_start_time = v;
                 qlen_mon_start = v;
-                qlen_mon_end = v;
+                // qlen_mon_end = v;
                 cnp_mon_start = v;
                 irn_mon_start = v;
                 std::cerr << "FLOWGEN_START_TIME\t\t" << flowgen_start_time << "\n";
