@@ -52,6 +52,7 @@ using namespace ns3;
 using namespace std;
 
 #define ENABLE_TRACE_SWITCH_BUFFER 1
+#define ENABLE_TRACE_HPCC 1
 
 NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 
@@ -104,6 +105,7 @@ FILE *voq_output = NULL;
 FILE *voq_detail_output = NULL;
 FILE *uplink_output = NULL;
 FILE *conn_output = NULL;
+FILE *trace_file = NULL;
 
 std::string data_rate, link_delay, topology_file, flow_file;
 std::string flow_input_file = "flow.txt";
@@ -116,6 +118,8 @@ std::string voq_mon_detail_file = "voq_detail.txt";
 std::string uplink_mon_file = "uplink.txt";
 std::string conn_mon_file = "conn.txt";
 std::string est_error_output_file = "est_error.txt";
+std::string trace_output_file = "trace.tr";
+std::string trace_config_id_file = "trace.txt";
 
 // CC params
 double alpha_resume_interval = 55, rp_timer = 300, ewma_gain = 1 / 16;
@@ -174,7 +178,7 @@ std::map<uint32_t, std::vector<uint32_t>> torId2UplinkIf;
 std::map<uint32_t, std::vector<uint32_t>> torId2DownlinkIf;
 
 // input files
-std::ifstream topof, flowf;
+std::ifstream topof, flowf, tracef;
 NodeContainer n;                         // node container
 std::vector<Ipv4Address> serverAddress;  // server address
 
@@ -577,7 +581,7 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
         
         fflush(qlen_output);
     }
-    
+
     if (Simulator::Now().GetTimeStep() < qlen_mon_end)
         Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer, qlen_output, n);
 }
@@ -1080,6 +1084,12 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("CONN_MON_FILE") == 0) {
                 conf >> conn_mon_file;
                 std::cerr << "CONN_MON_FILE\t\t\t\t" << conn_mon_file << '\n';
+            } else if (key.compare("TRACE_OUTPUT_FILE") == 0) {
+                conf >> trace_output_file;
+                std::cerr << "TRACE_OUTPUT_FILE\t\t\t\t" << trace_output_file << '\n';
+            } else if (key.compare("TRACE_CONFIG_ID_FILE") == 0) {
+                conf >> trace_config_id_file;
+                std::cerr << "TRACE_CONFIG_ID_FILE\t\t\t\t" << trace_config_id_file << '\n';
             } else if (key.compare("QLEN_MON_START") == 0) {
                 conf >> qlen_mon_start;
                 std::cerr << "QLEN_MON_START\t\t\t\t" << qlen_mon_start << '\n';
@@ -1170,9 +1180,11 @@ int main(int argc, char *argv[]) {
      */
     topof.open(topology_file.c_str());
     flowf.open(flow_file.c_str());
-    uint32_t node_num, switch_num, link_num;
+    tracef.open(trace_config_id_file.c_str());
+    uint32_t node_num, switch_num, link_num, trace_num;
     topof >> node_num >> switch_num >> link_num;
     flowf >> flow_num;
+    tracef >> trace_num;
 
     /*-------Parameter of Settings-------*/
     Settings::node_num = node_num;
@@ -1746,7 +1758,23 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // populate routing tables (although we use our custom impl in switch_node.cc)
+#if (ENABLE_TRACE_HPCC)
+    NodeContainer trace_nodes;
+	for (uint32_t i = 0; i < trace_num; i++)
+	{
+		uint32_t nid;
+		tracef >> nid;
+		if (nid >= n.GetN()){
+			continue;
+		}
+		trace_nodes = NodeContainer(trace_nodes, n.Get(nid));
+	}
+
+	trace_file = fopen(trace_output_file.c_str(), "w");
+    qbb.EnableTracing(trace_file, trace_nodes);
+#endif
+
+        // populate routing tables (although we use our custom impl in switch_node.cc)
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     // maintain port number for each host
@@ -1766,6 +1794,7 @@ int main(int argc, char *argv[]) {
     }
 
     topof.close();
+    tracef.close();
 
     // schedule link down
     if (link_down_time > 0) {
