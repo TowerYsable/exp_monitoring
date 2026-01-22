@@ -87,6 +87,8 @@ class SwitchMmu : public Object {
 
     uint32_t pfc_a_shift[pCnt];         // legacy: not used anymore
     uint32_t egress_bytes[pCnt][qCnt];  // legacy: not used anymore
+    uint32_t m_usedEgressQMinBytes[pCnt][qCnt];
+    uint32_t m_usedIngressPGBytes[pCnt][qCnt];
 
     uint32_t GetActivePortCnt(void) const { return m_activePortCnt; }
     void SetActivePortCnt(uint32_t v) {
@@ -126,12 +128,12 @@ class SwitchMmu : public Object {
     uint32_t m_maxBufferBytesPerPort{0};  // use this to calculate m_maxBufferBytes
     uint32_t m_staticMaxBufferBytes{0};   // use this to calculate m_maxBufferBytes
 
-    uint32_t m_usedIngressPGBytes[pCnt][qCnt];
+    // uint32_t m_usedIngressPGBytes[pCnt][qCnt];
     uint32_t m_usedIngressPortBytes[pCnt];
     uint32_t m_usedIngressSPBytes[4];
     uint32_t m_usedIngressPGHeadroomBytes[pCnt][qCnt];
 
-    uint32_t m_usedEgressQMinBytes[pCnt][qCnt];
+    // uint32_t m_usedEgressQMinBytes[pCnt][qCnt];
     uint32_t m_usedEgressQSharedBytes[pCnt][qCnt];
     uint32_t m_usedEgressPortBytes[pCnt];
     uint32_t m_usedEgressSPBytes[4];

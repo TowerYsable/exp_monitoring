@@ -51,6 +51,8 @@
 using namespace ns3;
 using namespace std;
 
+#define ENABLE_TRACE_SWITCH_BUFFER 1
+
 NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 
 /*------Load balancing parameters-----*/
@@ -84,7 +86,7 @@ uint32_t packet_payload_size = 1000, l2_chunk_size = 0, l2_ack_interval = 0;
 double pause_time = 5;  // PFC pause, microseconds
 double flowgen_start_time = 2.0, flowgen_stop_time = 2.5, simulator_extra_time = 0.1;
 // queue length monitoring time is not used in this simulator
-// uint32_t qlen_dump_interval = 100000000, qlen_mon_interval = 1000;  // ns
+uint32_t qlen_dump_interval = 100000000, qlen_mon_interval = 1000;  // ns
 uint64_t qlen_mon_start;               // ns
 uint64_t qlen_mon_end;                 // ns
 uint32_t switch_mon_interval = 10000;  // ns
@@ -505,7 +507,7 @@ void get_pfc(FILE *fout, Ptr<QbbNetDevice> dev, uint32_t type) {
 }
 
 /*******************************************************************/
-#if (false)
+#if (ENABLE_TRACE_SWITCH_BUFFER)
 
 /**
  * @brief Qlen monitoring at switches (output: qlen.txt), I think "periodically"...
@@ -520,26 +522,41 @@ struct QlenDistribution {
     }
 };
 
-map<uint32_t, map<uint32_t, QlenDistribution>> queue_result;
+map<uint32_t, map<uint32_t, QlenDistribution>> egress_queue_result;  // 出口队列统计
+map<uint32_t, map<uint32_t, QlenDistribution>> ingress_pg_result;    // 入口优先级组统计
 void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
-    /*******************************************************************/
-    /************************** UNUSED NOW *****************************/
-    /*******************************************************************/
     for (uint32_t i = 0; i < n->GetN(); i++) {
         if (n->Get(i)->GetNodeType() == 1) {  // is switch
             Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n->Get(i));
-            if (queue_result.find(i) == queue_result.end()) queue_result[i];
+            
+            // 初始化统计数据结构
+            if (egress_queue_result.find(i) == egress_queue_result.end()) egress_queue_result[i];
+            if (ingress_pg_result.find(i) == ingress_pg_result.end()) ingress_pg_result[i];
+            
             for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
-                uint32_t size = 0;
-                for (uint32_t k = 0; k < SwitchMmu::qCnt; k++)
-                    size += sw->m_mmu->egress_bytes[j][k];
-                queue_result[i][j].add(size);
+                uint32_t egress_size = 0;
+                uint32_t ingress_size = 0;
+                
+                for (uint32_t k = 0; k < SwitchMmu::qCnt; k++) {
+                    // 统计出口队列字节数
+                    egress_size += sw->m_mmu->m_usedEgressQMinBytes[j][k];
+                    
+                    // 统计入口优先级组字节数
+                    ingress_size += sw->m_mmu->m_usedIngressPGBytes[j][k];
+                }
+                
+                // 分别添加到对应的统计结果中
+                egress_queue_result[i][j].add(egress_size);
+                ingress_pg_result[i][j].add(ingress_size);
             }
         }
     }
     if (Simulator::Now().GetTimeStep() % qlen_dump_interval == 0) {
         fprintf(qlen_output, "time: %lu\n", Simulator::Now().GetTimeStep());
-        for (auto &it0 : queue_result) {
+        
+        // 输出出口队列统计
+        fprintf(qlen_output, "EGRESS_QUEUES:\n");
+        for (auto &it0 : egress_queue_result) {
             for (auto &it1 : it0.second) {
                 fprintf(qlen_output, "%u %u", it0.first, it1.first);
                 auto &dist = it1.second.cnt;
@@ -547,8 +564,20 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
                 fprintf(qlen_output, "\n");
             }
         }
+        // 输出入口优先级组统计
+        fprintf(qlen_output, "INGRESS_PRIORITY_GROUPS:\n");
+        for (auto &it0 : ingress_pg_result) {
+            for (auto &it1 : it0.second) {
+                fprintf(qlen_output, "%u %u", it0.first, it1.first);
+                auto &dist = it1.second.cnt;
+                for (uint32_t i = 0; i < dist.size(); i++) fprintf(qlen_output, " %u", dist[i]);
+                fprintf(qlen_output, "\n");
+            }
+        }
+        
         fflush(qlen_output);
     }
+    
     if (Simulator::Now().GetTimeStep() < qlen_mon_end)
         Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer, qlen_output, n);
 }
@@ -1743,6 +1772,12 @@ int main(int argc, char *argv[]) {
         Simulator::Schedule(Seconds(flowgen_start_time) + MicroSeconds(link_down_time),
                             &TakeDownLink, n, n.Get(link_down_A), n.Get(link_down_B));
     }
+
+#if (ENABLE_TRACE_SWITCH_BUFFER)
+    // schedule buffer monitor
+    FILE* qlen_output = fopen(qlen_mon_file.c_str(), "w");
+    Simulator::Schedule(Seconds(qlen_mon_start), &monitor_buffer, qlen_output, &n);
+#endif
 
     if (lb_mode == 9) {
         voq_output = fopen(voq_mon_file.c_str(), "w");                // specific to ConWeave
