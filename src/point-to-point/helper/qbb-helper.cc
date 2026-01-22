@@ -367,11 +367,11 @@ void QbbHelper::EnableTracingDevice(FILE *file, Ptr<QbbNetDevice> nd) {
     uint32_t deviceid = nd->GetIfIndex();
     std::ostringstream oss;
 
-    nd->TraceConnectWithoutContext("MacRx", MakeBoundCallback(&QbbHelper::MacRxDetailCallback, file, nd));
-    nd->TraceConnectWithoutContext("QbbEnqueue", MakeBoundCallback(&QbbHelper::EnqueueDetailCallback, file, nd));
-    nd->TraceConnectWithoutContext("QbbDequeue", MakeBoundCallback(&QbbHelper::DequeueDetailCallback, file, nd));
+    // nd->TraceConnectWithoutContext("MacRx", MakeBoundCallback(&QbbHelper::MacRxDetailCallback, file, nd));
+    // nd->TraceConnectWithoutContext("QbbEnqueue", MakeBoundCallback(&QbbHelper::EnqueueDetailCallback, file, nd));
+    // nd->TraceConnectWithoutContext("QbbDequeue", MakeBoundCallback(&QbbHelper::DequeueDetailCallback, file, nd));
     nd->TraceConnectWithoutContext("QbbDrop", MakeBoundCallback(&QbbHelper::DropDetailCallback, file, nd));
-    nd->TraceConnectWithoutContext("RdmaQpDequeue", MakeBoundCallback(&QbbHelper::QpDequeueCallback, file, nd));
+    // nd->TraceConnectWithoutContext("RdmaQpDequeue", MakeBoundCallback(&QbbHelper::QpDequeueCallback, file, nd));
 }
 
 /** unused in conweave simulation */

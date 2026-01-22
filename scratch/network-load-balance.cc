@@ -52,7 +52,7 @@ using namespace ns3;
 using namespace std;
 
 #define ENABLE_TRACE_SWITCH_BUFFER 1
-#define ENABLE_TRACE_HPCC 0
+#define ENABLE_TRACE_HPCC 1
 
 NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 
