@@ -543,7 +543,7 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
                 
                 for (uint32_t k = 0; k < SwitchMmu::qCnt; k++) {
                     // 统计出口队列字节数
-                    egress_size += sw->m_mmu->m_usedEgressQMinBytes[j][k];
+                    egress_size += sw->m_mmu->m_usedEgressQSharedBytes[j][k];
                     
                     // 统计入口优先级组字节数
                     ingress_size += sw->m_mmu->m_usedIngressPGBytes[j][k];
