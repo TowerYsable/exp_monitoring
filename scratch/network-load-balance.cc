@@ -35,6 +35,7 @@
 #include "ns3/broadcom-node.h"
 #include "ns3/conga-routing.h"
 #include "ns3/conweave-voq.h"
+#include "ns3/priorityqueue-voq.h"
 #include "ns3/core-module.h"
 #include "ns3/error-model.h"
 #include "ns3/global-route-manager.h"
@@ -51,13 +52,13 @@
 using namespace ns3;
 using namespace std;
 
-#define ENABLE_TRACE_SWITCH_BUFFER 1
+#define ENABLE_TRACE_SWITCH_BUFFER 0
 #define ENABLE_TRACE_HPCC 1
 
 NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 
 /*------Load balancing parameters-----*/
-// mode for load balancer, 0: flow ECMP, 2: DRILL, 3: Conga, 6: Letflow, 9: ConWeave
+// mode for load balancer, 0: flow ECMP, 2: DRILL, 3: Conga, 6: Letflow, 9: ConWeave, 10: PriorityQueue
 uint32_t lb_mode = 0;
 
 // Conga params (based on paper recommendation)
@@ -78,6 +79,14 @@ Time conweave_txExpiryTime = MicroSeconds(1000);          // waiting time for CL
 Time conweave_extraVOQFlushTime = MicroSeconds(32);       // extra for uncertainty
 Time conweave_defaultVOQWaitingTime = MicroSeconds(500);  // default flush timer if no history
 bool conweave_pathAwareRerouting = true;
+
+// PriorityQueue params
+Time priorityqueue_extraReplyDeadline = MicroSeconds(4);       // additional term to reply deadline
+Time priorityqueue_pathPauseTime = MicroSeconds(8);            // time to send packets to congested path
+Time priorityqueue_txExpiryTime = MicroSeconds(1000);          // waiting time for CLEAR
+Time priorityqueue_extraVOQFlushTime = MicroSeconds(32);       // extra for uncertainty
+Time priorityqueue_defaultVOQWaitingTime = MicroSeconds(500);  // default flush timer if no history
+bool priorityqueue_pathAwareRerouting = true;
 
 /*------------------------ simulation variables -----------------------------*/
 uint64_t one_hop_delay = 1000;  // nanoseconds
@@ -351,6 +360,25 @@ void periodic_monitoring(FILE *fout_voq, FILE *fout_voq_detail, FILE *fout_uplin
             }
         }
 
+        if (lb_mode_val == 10) {  // PriorityQueue
+            // monitor VOQ number per switch <time, ToRId, #VOQ, #Pkts>
+            uint32_t nVOQ = swNode->m_mmu->m_priorityqueueRouting.GetNumVOQ();
+            uint32_t nVolumeVOQ = swNode->m_mmu->m_priorityqueueRouting.GetVolumeVOQ();
+            fprintf(fout_voq, "%lu,%u,%u,%u\n", now, tor2If.first, nVOQ, nVolumeVOQ);
+
+            // monitor VOQ per destination IP <time, dstip, #VOQ, #Pkts>
+            std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> dip_to_nvoq_npkt;
+            for (auto voq : swNode->m_mmu->m_priorityqueueRouting.GetVOQMap()) {
+                auto &nvoq_npkt = dip_to_nvoq_npkt[voq.second.getDIP()];
+                nvoq_npkt.first += 1;
+                nvoq_npkt.second += voq.second.getQueueSize();
+            }
+            for (auto x : dip_to_nvoq_npkt) {
+                fprintf(fout_voq_detail, "%lu,%u,%u,%u\n", now, x.first, x.second.first,
+                        x.second.second);
+            }
+        } 
+
         // common: monitor TOR's uplink to measure load balancing performance
         for (const auto &iface : tor2If.second) {
             // monitor uplink txBytes <time, ToRId, OutDev, Bytes>
@@ -463,6 +491,68 @@ void conweave_history_print() {
             fprintf(est_error_output, "%d\n", x);
         }
         ConWeaveVOQ::m_flushEstErrorhistory.clear();
+        std::cout << "---------D O N E---------" << std::endl;
+    }
+}
+
+
+void priorityqueue_history_print() {
+    // PriorityQueue params
+    std::cout << "\n------PriorityQueue parameters-----" << std::endl;
+    std::cout << "Param - extraReplyDeadline:" << priorityqueue_extraReplyDeadline << std::endl;
+    std::cout << "Param - extraVOQFlushTime:" << priorityqueue_extraVOQFlushTime << std::endl;
+    std::cout << "Param - txExpiryTime:" << priorityqueue_txExpiryTime << std::endl;
+    std::cout << "Param - defaultVOQWaitingTime:" << priorityqueue_defaultVOQWaitingTime << std::endl;
+    std::cout << "Param - pathPauseTime:" << priorityqueue_pathPauseTime << std::endl;
+    std::cout << "Param - pathAwareRerouting:" << priorityqueue_pathAwareRerouting << std::endl;
+
+    std::cout << "\n------------PriorityQueue History---------------" << std::endl;
+    std::cout << "Number of INIT's Reply sent (RTT_REPLY):" << PriorityQueueRouting::m_nReplyInitSent
+              << "\nNumber of Timely RTT_REPLY (INIT's Reply):" << PriorityQueueRouting::m_nTimelyInitReplied
+              << "\nNumber of TAIL's Reply Sent (CLEAR):" << PriorityQueueRouting::m_nReplyTailSent
+              << "\nNumber of Timely CLEAR (TAIL's Reply):" << PriorityQueueRouting::m_nTimelyTailReplied
+              << "\nNumber of NOTIFY Sent:" << PriorityQueueRouting::m_nNotifySent
+              << "\nNumber of Rerouting:" << PriorityQueueRouting::m_nReRoute
+              << "\nNumber of OoO enqueued pkts:" << PriorityQueueRouting::m_nOutOfOrderPkts
+              << "\nNumber of VOQ Flush Total:" << PriorityQueueRouting::m_nFlushVOQTotal
+              << "\nNumber of VOQ Flush From History:" << PriorityQueueRouting::m_historyVOQSize.size()
+              << "\nNumber of VOQ Flush by TAIL:" << PriorityQueueRouting::m_nFlushVOQByTail
+              << std::endl;
+
+    std::cout << "--------------------------" << std::endl;
+
+    /** VOQ: Sanity check*/
+    for (size_t ToRId = 0; ToRId < Settings::node_num; ToRId++) {
+        Ptr<Node> node = n.Get(ToRId);
+        if (node->GetNodeType() == 1) {  // switches
+            auto swNode = DynamicCast<SwitchNode>(n.Get(ToRId));
+            if (swNode->m_isToR) {  // TOR switch
+                uint32_t num_remained_voq = swNode->m_mmu->m_priorityqueueRouting.GetNumVOQ();
+                if (num_remained_voq > 0) {
+                    printf("*******************************\n");
+                    printf("*** WARNING - Tor Sw (%lu) - VOQ (num=%u) is not flushed yet!! ***\n",
+                           ToRId, num_remained_voq);
+                    printf(
+                        " -- Probably the history print is too early so simulation might not be "
+                        "finished?");
+                    printf("********************************\n");
+                }
+            }
+        }
+    }
+
+    /** Get PriorityQueue Flush Time Estimation Error */
+    if (0) {
+        // sanity check - extraVOQFlushTime must be large enough to get accuracy
+        assert(priorityqueue_extraVOQFlushTime >= MicroSeconds(128) && "PARAMETER ERROR!!");
+
+        std::cout << "\n--------------------------" << std::endl;
+        std::cout << "Extracting PriorityQueue Estimation Error Data..." << std::endl;
+        est_error_output = fopen(est_error_output_file.c_str(), "w");
+        for (auto x : PriorityQueueVOQ::m_flushEstErrorhistory) {
+            fprintf(est_error_output, "%d\n", x);
+        }
+        PriorityQueueVOQ::m_flushEstErrorhistory.clear();
         std::cout << "---------D O N E---------" << std::endl;
     }
 }
@@ -609,6 +699,10 @@ void stop_simulation_middle() {
         if (lb_mode == 9) {  // CONWEAVE
             conweave_history_print();
         }
+        if (lb_mode == 10) {  // PRIORITYQUEUE
+            priorityqueue_history_print();
+        }
+
         Simulator::Stop(NanoSeconds(1));  // finish soon, stop this schedule (NECESSARY!)
         return;
     }
@@ -827,6 +921,34 @@ int main(int argc, char *argv[]) {
                 conweave_defaultVOQWaitingTime = Time(MicroSeconds(v));
                 std::cerr << "CONWEAVE_DEFAULT_VOQ_WAITING_TIME\t\t\t"
                           << conweave_defaultVOQWaitingTime << "\n";
+            } else if (key.compare("PRIORITYQUEUE_TX_EXPIRY_TIME") == 0) {
+                uint32_t v;
+                conf >> v;
+                priorityqueue_txExpiryTime = Time(MicroSeconds(v));
+                std::cerr << "PRIORITYQUEUE_TX_EXPIRY_TIME\t\t\t" << priorityqueue_txExpiryTime << "\n";
+            } else if (key.compare("PRIORITYQUEUE_REPLY_TIMEOUT_EXTRA") == 0) {
+                uint32_t v;
+                conf >> v;
+                priorityqueue_extraReplyDeadline = Time(MicroSeconds(v));
+                std::cerr << "PRIORITYQUEUE_REPLY_TIMEOUT_EXTRA\t\t\t" << priorityqueue_extraReplyDeadline
+                          << "\n";
+            } else if (key.compare("PRIORITYQUEUE_EXTRA_VOQ_FLUSH_TIME") == 0) {
+                uint32_t v;
+                conf >> v;
+                priorityqueue_extraVOQFlushTime = Time(MicroSeconds(v));
+                std::cerr << "PRIORITYQUEUE_EXTRA_VOQ_FLUSH_TIME\t\t\t" << priorityqueue_extraVOQFlushTime
+                          << "\n";
+            } else if (key.compare("PRIORITYQUEUE_PATH_PAUSE_TIME") == 0) {
+                uint32_t v;
+                conf >> v;
+                priorityqueue_pathPauseTime = Time(MicroSeconds(v));
+                std::cerr << "PRIORITYQUEUE_PATH_PAUSE_TIME\t\t\t" << priorityqueue_pathPauseTime << "\n";
+            } else if (key.compare("PRIORITYQUEUE_DEFAULT_VOQ_WAITING_TIME") == 0) {
+                uint32_t v;
+                conf >> v;
+                priorityqueue_defaultVOQWaitingTime = Time(MicroSeconds(v));
+                std::cerr << "PRIORITYQUEUE_DEFAULT_VOQ_WAITING_TIME\t\t\t"
+                          << priorityqueue_defaultVOQWaitingTime << "\n";
             } else if (key.compare("ENABLE_PFC") == 0) {
                 uint32_t v;
                 conf >> v;
@@ -1538,7 +1660,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* config load balancer's switches using ToR-to-ToR routing */
-    if (lb_mode == 3 || lb_mode == 6 || lb_mode == 9) {  // Conga, Letflow, Conweave
+    if (lb_mode == 3 || lb_mode == 6 || lb_mode == 9 || lb_mode == 10) {  // Conga, Letflow, Conweave, PriorityQueue
         NS_LOG_INFO("Configuring Load Balancer's Switches");
         for (auto &pair : link_pairs) {
             Ptr<Node> probably_host = n.Get(pair.first);
@@ -1612,6 +1734,12 @@ int main(int argc, char *argv[]) {
                                     swSrc->m_mmu->m_conweaveRouting.m_rxToRId2BaseRTT[swDstId] =
                                         one_hop_delay * 4;
                                 }
+                                if (lb_mode == 10) {
+                                    swSrc->m_mmu->m_priorityqueueRouting.m_PriorityQueueRoutingTable[swDstId]
+                                        .insert(pathId);
+                                    swSrc->m_mmu->m_priorityqueueRouting.m_rxToRId2BaseRTT[swDstId] =
+                                        one_hop_delay * 4;
+                                }
                                 continue;
                             }
 
@@ -1642,6 +1770,13 @@ int main(int argc, char *argv[]) {
                                             .m_ConWeaveRoutingTable[swDstId]
                                             .insert(pathId);
                                         swSrc->m_mmu->m_conweaveRouting.m_rxToRId2BaseRTT[swDstId] =
+                                            one_hop_delay * 6;
+                                    }
+                                    if (lb_mode == 10) {
+                                        swSrc->m_mmu->m_priorityqueueRouting
+                                            .m_PriorityQueueRoutingTable[swDstId]
+                                            .insert(pathId);
+                                        swSrc->m_mmu->m_priorityqueueRouting.m_rxToRId2BaseRTT[swDstId] =
                                             one_hop_delay * 6;
                                     }
                                     continue;
@@ -1678,6 +1813,13 @@ int main(int argc, char *argv[]) {
                                                 .m_ConWeaveRoutingTable[swDstId]
                                                 .insert(pathId);
                                             swSrc->m_mmu->m_conweaveRouting
+                                                .m_rxToRId2BaseRTT[swDstId] = one_hop_delay * 8;
+                                        }
+                                        if (lb_mode == 10) {
+                                            swSrc->m_mmu->m_priorityqueueRouting
+                                                .m_PriorityQueueRoutingTable[swDstId]
+                                                .insert(pathId);
+                                            swSrc->m_mmu->m_priorityqueueRouting
                                                 .m_rxToRId2BaseRTT[swDstId] = one_hop_delay * 8;
                                         }
                                         continue;
@@ -1740,6 +1882,13 @@ int main(int argc, char *argv[]) {
                         conweave_pathPauseTime, conweave_pathAwareRerouting);
                     sw->m_mmu->m_conweaveRouting.SetSwitchInfo(sw->m_isToR, sw->GetId());
                 }
+                if (lb_mode == 10) {
+                    sw->m_mmu->m_priorityqueueRouting.SetConstants(
+                        priorityqueue_extraReplyDeadline, priorityqueue_extraVOQFlushTime,
+                        priorityqueue_txExpiryTime, priorityqueue_defaultVOQWaitingTime,
+                        priorityqueue_pathPauseTime, priorityqueue_pathAwareRerouting);
+                    sw->m_mmu->m_priorityqueueRouting.SetSwitchInfo(sw->m_isToR, sw->GetId());
+                }
             }
         }
 
@@ -1755,6 +1904,10 @@ int main(int argc, char *argv[]) {
         if (lb_mode == 9) {  // CONWEAVE
             Simulator::Schedule(Seconds(flowgen_stop_time + simulator_extra_time),
                                 conweave_history_print);
+        }
+        if (lb_mode == 10) {  // PRIORITYQUEUE
+            Simulator::Schedule(Seconds(flowgen_stop_time + simulator_extra_time),
+                                priorityqueue_history_print);
         }
     }
 
@@ -1811,6 +1964,10 @@ int main(int argc, char *argv[]) {
     if (lb_mode == 9) {
         voq_output = fopen(voq_mon_file.c_str(), "w");                // specific to ConWeave
         voq_detail_output = fopen(voq_mon_detail_file.c_str(), "w");  // specific to ConWeave
+    }
+    if (lb_mode == 10) {
+        voq_output = fopen(voq_mon_file.c_str(), "w");                // specific to PriorityQueue
+        voq_detail_output = fopen(voq_mon_detail_file.c_str(), "w");  // specific to PriorityQueue
     }
 
     uplink_output = fopen(uplink_mon_file.c_str(), "w");  // common

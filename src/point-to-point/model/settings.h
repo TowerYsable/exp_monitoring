@@ -117,6 +117,9 @@ class Settings {
     /* conweave params */
     static const uint32_t CONWEAVE_CTRL_DUMMY_INDEV = 88888888;  // just arbitrary
 
+    /* priorityqueue params */
+    static const uint32_t PRIORITYQUEUE_CTRL_DUMMY_INDEV = 88888888;  // just arbitrary
+
     /* load balancer */
     // 0: flow ECMP, 2: DRILL, 3: Conga, 4: ConWeave
     static uint32_t lb_mode;

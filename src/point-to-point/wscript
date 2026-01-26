@@ -28,6 +28,7 @@ def build(bld):
         'model/conweave-routing.cc',
         'model/conweave-voq.cc',
         'model/priorityqueue-routing.cc',
+        'model/priorityqueue-voq.cc',
 		'helper/selective-packet-queue.cc',
         ]
 

@@ -109,6 +109,7 @@ lb_modes = {
     "conga": 3,
     "letflow": 6,
     "conweave": 9,
+    "priorityqueue": 10,
 }
 
 topo2bdp = {
@@ -227,22 +228,23 @@ def main():
         traffic_cdf = os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt" 
         if not os.path.exists(traffic_cdf):
             flow = args.cdf
-        print("Generate a input traffic file...")
-        print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
-            cdf=os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt",
-            n_host=n_host,
-            load=hostload / 100.0,
-            bw=args.bw + "G",
-            time=args.simul_time,
-            output=os.getcwd() + "/config/" + flow + ".txt"))
+        else:
+            print("Generate a input traffic file...")
+            print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
+                cdf=os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt",
+                n_host=n_host,
+                load=hostload / 100.0,
+                bw=args.bw + "G",
+                time=args.simul_time,
+                output=os.getcwd() + "/config/" + flow + ".txt"))
 
-        os.system("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
-            cdf=os.getcwd() + "/traffic_gen/" + args.cdf + ".txt",
-            n_host=n_host,
-            load=hostload / 100.0,
-            bw=args.bw + "G",
-            time=args.simul_time,
-            output=os.getcwd() + "/config/" + flow + ".txt"))
+            os.system("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
+                cdf=os.getcwd() + "/traffic_gen/" + args.cdf + ".txt",
+                n_host=n_host,
+                load=hostload / 100.0,
+                bw=args.bw + "G",
+                time=args.simul_time,
+                output=os.getcwd() + "/config/" + flow + ".txt"))
 
     # sanity check - bandwidth
     with open("config/{topo}.txt".format(topo=args.topo), 'r') as f_topo:

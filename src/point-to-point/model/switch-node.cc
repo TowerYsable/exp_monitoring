@@ -3,6 +3,7 @@
 #include "assert.h"
 #include "ns3/boolean.h"
 #include "ns3/conweave-routing.h"
+#include "ns3/priorityqueue-routing.h"
 #include "ns3/double.h"
 #include "ns3/flow-id-tag.h"
 #include "ns3/int-header.h"
@@ -48,6 +49,11 @@ SwitchNode::SwitchNode() {
     // ConWeave's Callback for switch functions
     m_mmu->m_conweaveRouting.SetSwitchSendCallback(MakeCallback(&SwitchNode::DoSwitchSend, this));
     m_mmu->m_conweaveRouting.SetSwitchSendToDevCallback(
+        MakeCallback(&SwitchNode::SendToDevContinue, this));
+
+    // PriorityQueue's Callback for switch functions
+    m_mmu->m_priorityqueueRouting.SetSwitchSendCallback(MakeCallback(&SwitchNode::DoSwitchSend, this));
+    m_mmu->m_priorityqueueRouting.SetSwitchSendToDevCallback(
         MakeCallback(&SwitchNode::SendToDevContinue, this));
 
     for (uint32_t i = 0; i < pCnt; i++) {
@@ -153,6 +159,13 @@ uint32_t SwitchNode::DoLbConWeave(Ptr<const Packet> p, const CustomHeader &ch,
 }
 /*----------------------------------*/
 
+/*------------------ PriorityQueue Dummy ----------------*/
+uint32_t SwitchNode::DoLbPriorityQueue(Ptr<const Packet> p, const CustomHeader &ch,
+                                  const std::vector<int> &nexthops) {
+    return DoLbFlowECMP(p, ch, nexthops);  // flow ECMP (dummy)
+}
+/*----------------------------------*/
+
 void SwitchNode::CheckAndSendPfc(uint32_t inDev, uint32_t qIndex) {
     Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
     bool pClasses[qCnt] = {0};
@@ -210,6 +223,12 @@ void SwitchNode::SendToDev(Ptr<Packet> p, CustomHeader &ch) {
     // ConWeave
     if (Settings::lb_mode == 9) {
         m_mmu->m_conweaveRouting.RouteInput(p, ch);
+        return;
+    }
+
+    // PriorityQueue
+    if (Settings::lb_mode == 10) {
+        m_mmu->m_priorityqueueRouting.RouteInput(p, ch);
         return;
     }
 
@@ -272,6 +291,8 @@ int SwitchNode::GetOutDev(Ptr<Packet> p, CustomHeader &ch) {
             return DoLbLetflow(p, ch, nexthops);
         case 9:
             return DoLbConWeave(p, ch, nexthops); /** DUMMY: Do ECMP */
+        case 10:
+            return DoLbPriorityQueue(p, ch, nexthops); /** DUMMY: Do ECMP */
         default:
             std::cout << "Unknown lb_mode(" << Settings::lb_mode << ")" << std::endl;
             assert(false);
@@ -293,6 +314,11 @@ void SwitchNode::DoSwitchSend(Ptr<Packet> p, CustomHeader &ch, uint32_t outDev, 
     if (inDev == Settings::CONWEAVE_CTRL_DUMMY_INDEV) { // sanity check
         // ConWeave reply is on ACK protocol with high priority, so qIndex should be 0
         assert(qIndex == 0 && m_ackHighPrio == 1 && "ConWeave's reply packet follows ACK, so its qIndex should be 0");
+    }
+
+    if (inDev == Settings::PRIORITYQUEUE_CTRL_DUMMY_INDEV) { // sanity check
+        // PriorityQueue reply is on ACK protocol with high priority, so qIndex should be 0
+        assert(qIndex == 0 && m_ackHighPrio == 1 && "PriorityQueue's reply packet follows ACK, so its qIndex should be 0");
     }
 
     if (qIndex != 0) {  // not highest priority
@@ -335,11 +361,14 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
     p->PeekPacketTag(t);
     if (qIndex != 0) {
         uint32_t inDev = t.GetFlowId();
-        if (inDev != Settings::CONWEAVE_CTRL_DUMMY_INDEV) {
+        if (inDev != Settings::CONWEAVE_CTRL_DUMMY_INDEV || inDev != Settings::PRIORITYQUEUE_CTRL_DUMMY_INDEV) {
             // NOTE: ConWeave's probe/reply does not need to pass inDev interface,
             // so skip for conweave's queued packets
             m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
         }
+        // if (inDev != Settings::PRIORITYQUEUE_CTRL_DUMMY_INDEV) {
+        //     m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
+        // }
         m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p->GetSize());
         if (m_ecnEnabled) {
             bool egressCongested = m_mmu->ShouldSendCN(ifIndex, qIndex);
@@ -355,6 +384,9 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
         }
         // NOTE: ConWeave's probe/reply does not need to pass inDev interface
         if (inDev != Settings::CONWEAVE_CTRL_DUMMY_INDEV) {
+            CheckAndSendResume(inDev, qIndex);
+        }
+        if (inDev != Settings::PRIORITYQUEUE_CTRL_DUMMY_INDEV) {
             CheckAndSendResume(inDev, qIndex);
         }
     }
